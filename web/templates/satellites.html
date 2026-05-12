@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+
+{% block title %}Satellites — {{ site_name }}{% endblock %}
+
+{% block page_title %}Satellites{% endblock %}
+
+{% block head %}
+<style>
+  /* Sky plot canvas */
+  #sky-plot-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  #sky-canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* Satellite table */
+  .snr-bar-cell { width: 80px; }
+  .snr-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: #2fb344;
+    min-width: 2px;
+  }
+  .snr-bar.beidou  { background: #f76707; }
+  .snr-bar.glonass { background: #4299e1; }
+  .snr-bar.galileo { background: #9b59b6; }
+  .snr-bar.other   { background: #626976; }
+
+  .sat-used   { font-weight: 600; }
+  .sat-unused { opacity: 0.55; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="row g-3">
+
+  <!-- ── Sky plot ────────────────────────────────────────── -->
+  <div class="col-12 col-lg-5">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Sky Plot</h3>
+        <div class="card-options">
+          <small class="text-muted" id="sky-sat-count">— sats</small>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="sky-plot-wrap">
+          <canvas id="sky-canvas" width="400" height="400"></canvas>
+        </div>
+        <!-- Legend -->
+        <div class="d-flex flex-wrap gap-3 mt-2 justify-content-center" style="font-size:0.75rem">
+          <span><span style="color:#2fb344">●</span> GPS</span>
+          <span><span style="color:#f76707">●</span> BeiDou</span>
+          <span><span style="color:#4299e1">●</span> GLONASS</span>
+          <span><span style="color:#9b59b6">●</span> Galileo</span>
+          <span class="text-muted">○ Below mask / unused</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Satellite table + SNR chart ───────────────────────── -->
+  <div class="col-12 col-lg-7">
+
+    <!-- Satellite table -->
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Satellite Detail</h3>
+      </div>
+      <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+        <table class="table table-sm card-table">
+          <thead class="sticky-top">
+            <tr>
+              <th>PRN</th>
+              <th>System</th>
+              <th class="text-end">Az°</th>
+              <th class="text-end">El°</th>
+              <th class="text-end">SNR</th>
+              <th class="snr-bar-cell"></th>
+              <th class="text-center">Used</th>
+            </tr>
+          </thead>
+          <tbody id="sat-tbody">
+            <tr><td colspan="7" class="text-muted text-center loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Satellite count history chart -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Satellite Count (1 hr)</h3>
+      </div>
+      <div class="card-body p-2">
+        <div id="chart-sats" style="height:160px"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const CONST_COLORS = {
+    GPS:     '#2fb344',
+    BeiDou:  '#f76707',
+    GLONASS: '#4299e1',
+    Galileo: '#9b59b6',
+  };
+  const CONST_CLASS = {
+    GPS:     'gps',
+    BeiDou:  'beidou',
+    GLONASS: 'glonass',
+    Galileo: 'galileo',
+  };
+
+  let chartSats = null;
+
+  // ── Sky plot renderer ────────────────────────────────────
+  function drawSkyPlot(satellites, elevMask) {
+    const canvas = document.getElementById('sky-canvas');
+    const ctx    = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    const R  = Math.min(W, H) / 2 - 20;
+
+    const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    const gridColor  = isDark ? 'rgba(255,255,255,0.1)'  : 'rgba(0,0,0,0.1)';
+    const labelColor = isDark ? 'rgba(255,255,255,0.4)'  : 'rgba(0,0,0,0.4)';
+    const textColor  = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
+    const bgColor    = isDark ? '#161b22' : '#f8fafc';
+    const maskColor  = isDark ? 'rgba(255,100,50,0.08)' : 'rgba(255,100,50,0.06)';
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = bgColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Elevation rings: 0°, 30°, 60°, 90°
+    [0, 30, 60].forEach(elev => {
+      const r = R * (1 - elev / 90);
+      ctx.strokeStyle = gridColor;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = labelColor;
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.fillText(`${elev}°`, cx + r + 3, cy);
+    });
+
+    // Elevation mask ring (filled zone below mask)
+    if (elevMask > 0) {
+      const maskR = R * (1 - elevMask / 90);
+      ctx.fillStyle = maskColor;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.arc(cx, cy, maskR, 0, Math.PI * 2, true);
+      ctx.fill();
+
+      ctx.strokeStyle = isDark ? 'rgba(255,100,50,0.3)' : 'rgba(255,100,50,0.25)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, maskR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Cardinal direction labels
+    const cardinals = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+    ctx.fillStyle = labelColor;
+    ctx.font = 'bold 11px JetBrains Mono, monospace';
+    cardinals.forEach(([label, az]) => {
+      const rad = (az - 90) * Math.PI / 180;
+      const lx  = cx + (R + 12) * Math.cos(rad);
+      const ly  = cy + (R + 12) * Math.sin(rad);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx, ly);
+    });
+
+    // Cross-hairs
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+    ctx.stroke();
+
+    // Plot satellites
+    satellites.forEach(sat => {
+      if (sat.azimuth == null || sat.elevation == null) return;
+      const az  = sat.azimuth;
+      const el  = sat.elevation;
+      const rad = (az - 90) * Math.PI / 180;
+      const r   = R * (1 - el / 90);
+      const sx  = cx + r * Math.cos(rad);
+      const sy  = cy + r * Math.sin(rad);
+
+      const color   = CONST_COLORS[sat.constellation] || '#626976';
+      const isAbove = sat.above_mask;
+      const isUsed  = sat.used;
+
+      // Dot size scaled by SNR (8-14px radius)
+      const snr  = sat.snr || 0;
+      const dotR = isAbove ? Math.max(5, Math.min(10, 4 + snr / 6)) : 4;
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, dotR, 0, Math.PI * 2);
+
+      if (isUsed) {
+        ctx.fillStyle = color;
+        ctx.fill();
+      } else if (isAbove) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        // Below mask
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // PRN label
+      if (isAbove) {
+        ctx.fillStyle = isUsed ? '#fff' : color;
+        ctx.font = `${isUsed ? 'bold ' : ''}9px JetBrains Mono, monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(sat.prn || ''), sx, sy);
+      }
+    });
+  }
+
+  // ── Satellite table ──────────────────────────────────────
+  function renderSatTable(satellites) {
+    const tbody = document.getElementById('sat-tbody');
+    if (!satellites || satellites.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">No satellites</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = satellites.map(sat => {
+      const color    = CONST_COLORS[sat.constellation] || '#626976';
+      const barClass = CONST_CLASS[sat.constellation] || 'other';
+      const snr      = sat.snr;
+      const snrPct   = snr != null ? Math.min(100, (snr / 50) * 100) : 0;
+      const rowCls   = sat.used ? 'sat-used' : 'sat-unused';
+      const usedBadge = sat.used
+        ? '<span class="badge bg-green-lt" style="font-size:0.65rem">●</span>'
+        : '<span class="text-muted">○</span>';
+
+      return `<tr class="${rowCls}">
+        <td class="num">${sat.prn ?? '—'}</td>
+        <td><span style="color:${color}">${sat.constellation}</span></td>
+        <td class="text-end num">${sat.azimuth != null ? sat.azimuth.toFixed(0) : '—'}</td>
+        <td class="text-end num">${sat.elevation != null ? sat.elevation.toFixed(0) : '—'}</td>
+        <td class="text-end num">${snr != null ? snr.toFixed(1) : '—'}</td>
+        <td class="snr-bar-cell">
+          <div style="background:rgba(128,128,128,0.15);height:6px;border-radius:3px">
+            <div class="snr-bar ${barClass}" style="width:${snrPct}%"></div>
+          </div>
+        </td>
+        <td class="text-center">${usedBadge}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Satellite count chart ────────────────────────────────
+  function initSatChart(history) {
+    chartSats = new ApexCharts(
+      document.getElementById('chart-sats'),
+      timeSeriesOptions({
+        series: [
+          { name: 'Used',    data: toApex(history.sats_used)    },
+          { name: 'Visible', data: toApex(history.sats_visible) },
+        ],
+        colors:  ['#2fb344', '#4299e1'],
+        stroke:  { curve: 'stepline', width: [2, 1], dashArray: [0, 4] },
+        yaxis: {
+          min: 0,
+          labels: {
+            style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+            formatter: v => v != null ? Math.round(v) : '',
+          },
+          title: { text: 'count',
+                   style: { fontFamily: 'JetBrains Mono, monospace' } },
+        },
+      })
+    );
+    chartSats.render();
+  }
+
+  // ── Main refresh ─────────────────────────────────────────
+  let firstLoad = true;
+
+  async function refresh() {
+    try {
+      const resp = await fetch('/api/satellites');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      const sats    = data.satellites || [];
+      const elevMask = data.elevation_mask || 10;
+
+      document.getElementById('sky-sat-count').textContent =
+        `${data.sats_used ?? '—'} used / ${data.sats_visible ?? '—'} visible`;
+
+      drawSkyPlot(sats, elevMask);
+      renderSatTable(sats);
+
+      if (firstLoad) {
+        initSatChart(data.history || {});
+        firstLoad = false;
+      } else if (chartSats) {
+        chartSats.updateSeries([
+          { name: 'Used',    data: toApex((data.history || {}).sats_used)    },
+          { name: 'Visible', data: toApex((data.history || {}).sats_visible) },
+        ]);
+      }
+
+      updateDataAge(data.cycle_time, data.errors);
+    } catch(err) {
+      console.error('Satellites fetch failed:', err);
+      updateDataAge(null, [err.message]);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, {{ refresh_interval }} * 1000);
+</script>
+{% endblock %}

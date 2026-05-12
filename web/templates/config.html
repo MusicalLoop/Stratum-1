@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration — {{ site_name }}{% endblock %}
+
+{% block page_title %}Configuration{% endblock %}
+
+{% block head %}
+<style>
+  .test-output {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 0.78rem;
+    background: var(--tblr-code-bg, #f0f0f0);
+    border-radius: 4px;
+    padding: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 0.5rem;
+    display: none;
+  }
+  [data-bs-theme="dark"] .test-output { background: #0f1117; }
+  .test-pass { color: #2fb344; }
+  .test-fail { color: #d63939; }
+  .save-toast {
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    z-index: 9999; min-width: 220px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<form id="config-form" onsubmit="return false">
+
+<!-- ── Data collection ────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">Data Collection</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Poll interval (seconds)</label>
+        <input type="number" class="form-control num" name="poll_interval_seconds"
+               min="5" max="3600" placeholder="10">
+        <small class="text-muted">Minimum 5s. How often chrony/gpsd/system are polled.</small>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Data retention (days)</label>
+        <input type="number" class="form-control num" name="retention_days"
+               min="1" max="3650" placeholder="90">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Smoothing window (minutes)</label>
+        <select class="form-select num" name="smoothing_window_minutes">
+          <option value="1">1 minute</option>
+          <option value="5">5 minutes</option>
+          <option value="10">10 minutes</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Default chart window</label>
+        <select class="form-select" name="chart_default_window_hours">
+          <option value="1">1 hour</option>
+          <option value="6">6 hours</option>
+          <option value="24">24 hours</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Auto-purge old data</label>
+        <select class="form-select" name="auto_purge">
+          <option value="true">Enabled</option>
+          <option value="false">Disabled</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Show raw trace on charts</label>
+        <select class="form-select" name="chart_show_raw">
+          <option value="true">Yes — raw + smoothed</option>
+          <option value="false">No — smoothed only</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Alert thresholds ───────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">Alert Thresholds</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <label class="form-label">Offset warning (ns)</label>
+        <input type="number" class="form-control num" name="offset_warning_ns" min="1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Offset critical (ns)</label>
+        <input type="number" class="form-control num" name="offset_critical_ns" min="1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Jitter warning (ns)</label>
+        <input type="number" class="form-control num" name="jitter_warning_ns" min="1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Jitter critical (ns)</label>
+        <input type="number" class="form-control num" name="jitter_critical_ns" min="1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Root dispersion warning (µs)</label>
+        <input type="number" class="form-control num" name="dispersion_warning_us" min="0" step="0.1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Min satellites warning</label>
+        <input type="number" class="form-control num" name="min_satellites_warning" min="1">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">CPU temp warning (°C)</label>
+        <input type="number" class="form-control num" name="cpu_temp_warning_c" min="0">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">CPU temp critical (°C)</label>
+        <input type="number" class="form-control num" name="cpu_temp_critical_c" min="0">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Disk warning (%)</label>
+        <input type="number" class="form-control num" name="disk_warning_pct" min="1" max="99">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">Offset display unit</label>
+        <select class="form-select num" name="offset_display_unit">
+          <option value="ns">ns (nanoseconds)</option>
+          <option value="us">µs (microseconds)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── GNSS / Hardware ────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">GNSS / Hardware</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">gpsd host</label>
+        <input type="text" class="form-control num" name="gpsd_host" placeholder="localhost">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label">gpsd port</label>
+        <input type="number" class="form-control num" name="gpsd_port" min="1" max="65535">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">PPS device</label>
+        <input type="text" class="form-control num" name="pps_device" placeholder="/dev/pps0">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Elevation mask (°)</label>
+        <input type="number" class="form-control num" name="elevation_mask_degrees" min="0" max="45">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">Expected constellations</label>
+        <input type="text" class="form-control num" name="expected_constellations"
+               placeholder="GPS,BeiDou">
+        <small class="text-muted">Comma-separated. Absence triggers a warning.</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Chrony / NTP ───────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">Chrony / NTP</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">chronyc path</label>
+        <input type="text" class="form-control num" name="chronyc_path"
+               placeholder="/usr/bin/chronyc">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Reference label</label>
+        <input type="text" class="form-control" name="reference_label"
+               placeholder="GPS PPS">
+        <small class="text-muted">Friendly name shown on all pages.</small>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Highlighted peers</label>
+        <input type="text" class="form-control num" name="highlighted_peers"
+               placeholder="192.168.1.1,pool.ntp.org">
+        <small class="text-muted">Comma-separated IPs/hostnames.</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── UI / Display ───────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">UI / Display</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Site name</label>
+        <input type="text" class="form-control" name="site_name"
+               placeholder="PowerPi Stratum-1">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label">Default theme</label>
+        <select class="form-select" name="default_theme">
+          <option value="system">Follow system</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">UI refresh interval (s)</label>
+        <input type="number" class="form-control num" name="ui_refresh_interval_seconds"
+               min="5" max="3600">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Show position on GNSS page</label>
+        <select class="form-select" name="show_position">
+          <option value="true">Shown</option>
+          <option value="false">Hidden</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Save / Reset ───────────────────────────────────────── -->
+<div class="d-flex gap-2 mb-4">
+  <button type="button" class="btn btn-primary" onclick="saveConfig()">
+    Save changes
+  </button>
+  <button type="button" class="btn btn-outline-danger" onclick="resetDefaults()">
+    Reset to defaults
+  </button>
+</div>
+
+</form>
+
+<!-- ── Test actions ───────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header"><h3 class="card-title">Test &amp; Validate</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+
+      <div class="col-12 col-md-6 col-lg-3">
+        <button class="btn btn-outline-secondary w-100" onclick="runTest('chronyc')">
+          Test chronyc
+        </button>
+        <div class="test-output" id="test-chronyc"></div>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-3">
+        <button class="btn btn-outline-secondary w-100" onclick="runTest('gpsd')">
+          Test gpsd
+        </button>
+        <div class="test-output" id="test-gpsd"></div>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-3">
+        <button class="btn btn-outline-secondary w-100" onclick="runTest('pps')">
+          Test PPS devices
+        </button>
+        <div class="test-output" id="test-pps"></div>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-3">
+        <button class="btn btn-outline-secondary w-100" onclick="runTest('db')">
+          Check database
+        </button>
+        <div class="test-output" id="test-db"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="save-toast" id="save-toast" style="display:none">
+  <div class="alert mb-0" id="save-toast-inner"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Load current config into form ────────────────────────
+  async function loadConfig() {
+    const resp = await fetch('/api/config');
+    const cfg  = await resp.json();
+    const form = document.getElementById('config-form');
+
+    Object.entries(cfg).forEach(([key, val]) => {
+      const el = form.elements[key];
+      if (!el) return;
+      if (el.tagName === 'SELECT') {
+        // Match boolean true/false as string "true"/"false"
+        el.value = String(val);
+      } else {
+        el.value = val;
+      }
+    });
+  }
+
+  // ── Save config ──────────────────────────────────────────
+  async function saveConfig() {
+    const form = document.getElementById('config-form');
+    const data = {};
+    new FormData(form).forEach((val, key) => {
+      // Coerce types
+      const el = form.elements[key];
+      if (el.type === 'number') {
+        data[key] = parseFloat(val);
+      } else if (val === 'true') {
+        data[key] = true;
+      } else if (val === 'false') {
+        data[key] = false;
+      } else {
+        data[key] = val;
+      }
+    });
+
+    try {
+      const resp = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const result = await resp.json();
+
+      const invalids = Object.entries(result.results || {})
+        .filter(([k, v]) => v !== 'ok')
+        .map(([k, v]) => `${k}: ${v}`);
+
+      if (invalids.length > 0) {
+        showToast(`Saved with warnings: ${invalids.join('; ')}`, 'warning');
+      } else {
+        showToast('Configuration saved.', 'success');
+      }
+    } catch(err) {
+      showToast('Save failed: ' + err.message, 'danger');
+    }
+  }
+
+  // ── Reset to defaults ────────────────────────────────────
+  async function resetDefaults() {
+    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+    // Send empty object — config.py fills in all defaults
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    showToast('Reset to defaults. Reloading…', 'info');
+    setTimeout(() => loadConfig(), 800);
+  }
+
+  // ── Test actions ─────────────────────────────────────────
+  async function runTest(action) {
+    const el  = document.getElementById('test-' + action);
+    el.style.display = '';
+    el.className = 'test-output loading';
+    el.textContent = 'Running…';
+
+    try {
+      const resp = await fetch('/api/config/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const result = await resp.json();
+      el.className = 'test-output ' + (result.passed ? 'test-pass' : 'test-fail');
+      el.textContent = (result.passed ? '✓ PASS\n\n' : '✕ FAIL\n\n') + result.output;
+    } catch(err) {
+      el.className = 'test-output test-fail';
+      el.textContent = '✕ Error: ' + err.message;
+    }
+  }
+
+  // ── Toast helper ─────────────────────────────────────────
+  function showToast(msg, type) {
+    const toast = document.getElementById('save-toast');
+    const inner = document.getElementById('save-toast-inner');
+    inner.className = `alert alert-${type} mb-0`;
+    inner.textContent = msg;
+    toast.style.display = '';
+    setTimeout(() => { toast.style.display = 'none'; }, 3500);
+  }
+
+  loadConfig();
+</script>
+{% endblock %}

@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block title %}History — {{ site_name }}{% endblock %}
+
+{% block page_title %}History &amp; Trends{% endblock %}
+
+{% block page_actions %}
+<div class="btn-group btn-group-sm" id="range-btns">
+  <button class="btn btn-outline-secondary active" data-range="24h">24h</button>
+  <button class="btn btn-outline-secondary" data-range="7d">7d</button>
+  <button class="btn btn-outline-secondary" data-range="30d">30d</button>
+  <button class="btn btn-outline-secondary" data-range="90d">90d</button>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Charts ─────────────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">PPS Offset</h3></div>
+      <div class="card-body p-2"><div id="chart-pps" style="height:200px"></div></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Frequency Correction (ppm)</h3></div>
+      <div class="card-body p-2"><div id="chart-freq" style="height:200px"></div></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Satellites Used</h3></div>
+      <div class="card-body p-2"><div id="chart-sats" style="height:200px"></div></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">CPU Temperature (°C)</h3></div>
+      <div class="card-body p-2"><div id="chart-temp" style="height:200px"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Daily summary table ────────────────────────────────── -->
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Daily Summary — PPS Offset</h3>
+    <div class="card-options">
+      <button class="btn btn-sm btn-outline-secondary" onclick="exportCSV()">
+        Export CSV
+      </button>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm card-table">
+      <thead>
+        <tr>
+          <th>Date (UTC)</th>
+          <th class="text-end">Mean |offset|</th>
+          <th class="text-end">Min</th>
+          <th class="text-end">Max</th>
+          <th class="text-end">Samples</th>
+        </tr>
+      </thead>
+      <tbody id="daily-tbody">
+        <tr><td colspan="5" class="text-muted text-center loading">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let charts = {};
+  let currentRange = '24h';
+  let lastDailySummary = [];
+
+  document.getElementById('range-btns').addEventListener('click', e => {
+    const btn = e.target.closest('[data-range]');
+    if (!btn) return;
+    document.querySelectorAll('#range-btns .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentRange = btn.dataset.range;
+    refresh();
+  });
+
+  const chartDefs = [
+    { id: 'chart-pps',  metric: 'pps_offset',  label: 'PPS Offset', color: '#2fb344',
+      yFmt: v => v != null ? v.toFixed(0) + ' ns' : '', yTitle: 'ns' },
+    { id: 'chart-freq', metric: 'freq_ppm',     label: 'Freq ppm',   color: '#f76707',
+      yFmt: v => v != null ? v.toFixed(3) : '', yTitle: 'ppm' },
+    { id: 'chart-sats', metric: 'sats_used',    label: 'Sats used',  color: '#4299e1',
+      yFmt: v => v != null ? Math.round(v) : '', yTitle: 'count' },
+    { id: 'chart-temp', metric: 'cpu_temp',     label: 'CPU °C',     color: '#e55c1e',
+      yFmt: v => v != null ? v.toFixed(1) + '°' : '', yTitle: '°C' },
+  ];
+
+  function initCharts(data) {
+    chartDefs.forEach(def => {
+      const c = new ApexCharts(
+        document.getElementById(def.id),
+        timeSeriesOptions({
+          series: [{ name: def.label,
+                     data: toApex((data.charts || {})[def.metric]) }],
+          colors: [def.color],
+          yaxis: {
+            labels: { style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+                      formatter: def.yFmt },
+            title: { text: def.yTitle,
+                     style: { fontFamily: 'JetBrains Mono, monospace' } },
+          },
+        })
+      );
+      c.render();
+      charts[def.id] = c;
+    });
+  }
+
+  function updateCharts(data) {
+    chartDefs.forEach(def => {
+      if (charts[def.id]) {
+        charts[def.id].updateSeries([{
+          name: def.label,
+          data: toApex((data.charts || {})[def.metric]),
+        }]);
+      }
+    });
+  }
+
+  function renderDailySummary(rows) {
+    lastDailySummary = rows || [];
+    const tbody = document.getElementById('daily-tbody');
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center">No data for this period</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="num">${r.date}</td>
+        <td class="text-end num">${r.mean_abs_ns != null ? r.mean_abs_ns.toFixed(1) + ' ns' : '—'}</td>
+        <td class="text-end num">${r.min_ns != null ? r.min_ns.toFixed(1) + ' ns' : '—'}</td>
+        <td class="text-end num">${r.max_ns != null ? r.max_ns.toFixed(1) + ' ns' : '—'}</td>
+        <td class="text-end num">${r.n_samples ?? '—'}</td>
+      </tr>
+    `).join('');
+  }
+
+  function exportCSV() {
+    if (!lastDailySummary.length) return;
+    const header = 'Date,Mean |offset| ns,Min ns,Max ns,Samples';
+    const rows   = lastDailySummary.map(r =>
+      `${r.date},${r.mean_abs_ns},${r.min_ns},${r.max_ns},${r.n_samples}`
+    );
+    const blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `pps-daily-${currentRange}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  let firstLoad = true;
+
+  async function refresh() {
+    try {
+      const resp = await fetch(`/api/history?range=${currentRange}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      if (firstLoad) { initCharts(data); firstLoad = false; }
+      else           { updateCharts(data); }
+
+      renderDailySummary(data.daily_summary);
+      updateDataAge(null, []);
+    } catch(err) {
+      console.error('History fetch failed:', err);
+    }
+  }
+
+  refresh();
+</script>
+{% endblock %}

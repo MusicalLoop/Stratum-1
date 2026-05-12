@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}System Health — {{ site_name }}{% endblock %}
+
+{% block page_title %}System Health{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat cards ─────────────────────────────────────────── -->
+<div class="row row-cards g-3 mb-3">
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">CPU Temp</div>
+        <div class="stat-value num" id="s-cpu-temp">—</div>
+        <div class="stat-unit">°C</div>
+        <div class="stat-sublabel num" id="s-cpu-freq">— MHz</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">CPU Usage</div>
+        <div class="stat-value num" id="s-cpu-usage">—</div>
+        <div class="stat-unit">%</div>
+        <div class="stat-sublabel num" id="s-cpu-cores">— cores</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Memory</div>
+        <div class="stat-value num" id="s-mem">—</div>
+        <div class="stat-unit">%</div>
+        <div class="stat-sublabel num" id="s-mem-detail">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Disk</div>
+        <div class="stat-value num" id="s-disk">—</div>
+        <div class="stat-unit">%</div>
+        <div class="stat-sublabel num" id="s-disk-detail">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Load avg</div>
+        <div class="stat-value-sm num" id="s-load">—</div>
+        <div class="stat-sublabel num" id="s-load-detail">— / —</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Uptime</div>
+        <div class="stat-value-sm num" id="s-uptime">—</div>
+        <div class="stat-sublabel num" id="s-ip">—</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Services + PPS ─────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><h3 class="card-title">Services</h3></div>
+      <div class="card-body" id="services-panel">
+        <div class="text-muted loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><h3 class="card-title">PPS Devices</h3></div>
+      <div class="card-body" id="pps-panel">
+        <div class="text-muted loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Charts ─────────────────────────────────────────────── -->
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">CPU Temp vs Frequency Correction</h3>
+        <div class="card-options">
+          <small class="text-muted">Dual axis — thermal drift diagnostic</small>
+        </div>
+      </div>
+      <div class="card-body p-2">
+        <div id="chart-temp-freq" style="height:220px"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">CPU &amp; Memory (1hr)</h3></div>
+      <div class="card-body p-2">
+        <div id="chart-cpu-mem" style="height:220px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let chartTempFreq = null;
+  let chartCpuMem   = null;
+
+  function renderStats(data) {
+    const cpu  = data.cpu    || {};
+    const mem  = data.memory || {};
+    const disk = data.disk   || {};
+    const load = data.load   || {};
+    const up   = data.uptime || {};
+    const net  = data.network|| {};
+
+    document.getElementById('s-cpu-temp').textContent   = cpu.temp_c != null ? cpu.temp_c.toFixed(1) : '—';
+    document.getElementById('s-cpu-freq').textContent   = cpu.freq_mhz != null ? cpu.freq_mhz.toFixed(0) + ' MHz' : '—';
+    document.getElementById('s-cpu-usage').textContent  = cpu.usage_pct != null ? cpu.usage_pct.toFixed(1) : '—';
+    document.getElementById('s-cpu-cores').textContent  = cpu.core_count ? `${cpu.core_count} cores` : '—';
+    document.getElementById('s-mem').textContent        = mem.usage_pct != null ? mem.usage_pct.toFixed(1) : '—';
+    document.getElementById('s-mem-detail').textContent = mem.used_mb != null
+      ? `${mem.used_mb.toFixed(0)} / ${(mem.total_mb||0).toFixed(0)} MB` : '—';
+    document.getElementById('s-disk').textContent       = disk.usage_pct != null ? disk.usage_pct.toFixed(1) : '—';
+    document.getElementById('s-disk-detail').textContent = disk.used_gb != null
+      ? `${disk.used_gb.toFixed(1)} / ${(disk.total_gb||0).toFixed(1)} GB` : '—';
+    document.getElementById('s-load').textContent       = load.load_1 != null ? load.load_1.toFixed(2) : '—';
+    document.getElementById('s-load-detail').textContent = load.load_5 != null
+      ? `${load.load_5.toFixed(2)} / ${load.load_15.toFixed(2)}` : '— / —';
+    document.getElementById('s-uptime').textContent     = up.str || '—';
+    document.getElementById('s-ip').textContent         = net.ip_address || net.hostname || '—';
+  }
+
+  function renderServices(services) {
+    const panel = document.getElementById('services-panel');
+    if (!services || Object.keys(services).length === 0) {
+      panel.innerHTML = '<div class="text-muted">No service data</div>';
+      return;
+    }
+    panel.innerHTML = Object.entries(services).map(([name, info]) => {
+      const active = info.active;
+      const badge  = active
+        ? '<span class="badge bg-green-lt">active</span>'
+        : `<span class="badge bg-red-lt">${info.status}</span>`;
+      return `<div class="d-flex align-items-center justify-content-between mb-2">
+        <span class="num fw-semibold">${name}</span>
+        ${badge}
+      </div>`;
+    }).join('');
+  }
+
+  function renderPPS(devices) {
+    const panel = document.getElementById('pps-panel');
+    if (!devices || devices.length === 0) {
+      panel.innerHTML = '<div class="text-muted">No PPS devices found</div>';
+      return;
+    }
+    panel.innerHTML = devices.map(d => {
+      const gpioNote = d.is_gpio
+        ? '<span class="badge bg-green-lt ms-2">GPIO PPS</span>'
+        : '';
+      return `<div class="d-flex align-items-center mb-2">
+        <span class="num fw-semibold">${d.device}</span>
+        ${gpioNote}
+        <span class="text-muted num ms-3" style="font-size:0.8rem">${d.name || ''}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function initCharts(charts) {
+    // Temp + frequency dual-axis
+    chartTempFreq = new ApexCharts(
+      document.getElementById('chart-temp-freq'),
+      {
+        series: [
+          { name: 'CPU temp (°C)', data: toApex(charts.cpu_temp) },
+          { name: 'Freq corr (ppm)', data: toApex(charts.freq_ppm) },
+        ],
+        chart: { type: 'line', height: 220, toolbar: { show: false },
+                 animations: { enabled: false }, background: 'transparent' },
+        colors:  ['#f76707', '#4299e1'],
+        stroke:  { curve: 'smooth', width: [2, 1.5], dashArray: [0, 4] },
+        xaxis:   { type: 'datetime',
+                   labels: { style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+                              datetimeUTC: false } },
+        yaxis: [
+          { title: { text: '°C', style: { fontFamily: 'JetBrains Mono, monospace' } },
+            labels: { style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+                      formatter: v => v != null ? v.toFixed(1) : '' } },
+          { opposite: true,
+            title: { text: 'ppm', style: { fontFamily: 'JetBrains Mono, monospace' } },
+            labels: { style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+                      formatter: v => v != null ? v.toFixed(3) : '' } },
+        ],
+        grid: { borderColor: 'rgba(128,128,128,0.1)', strokeDashArray: 3 },
+        tooltip: { x: { format: 'HH:mm:ss' },
+                   style: { fontFamily: 'JetBrains Mono, monospace' } },
+        theme: { mode: document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light' },
+        legend: { fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' },
+      }
+    );
+
+    // CPU + memory
+    chartCpuMem = new ApexCharts(
+      document.getElementById('chart-cpu-mem'),
+      timeSeriesOptions({
+        series: [
+          { name: 'CPU %',  data: toApex(charts.cpu_usage) },
+          { name: 'Mem %',  data: toApex(charts.mem_usage) },
+        ],
+        colors: ['#e55c1e', '#9b59b6'],
+        yaxis: {
+          min: 0, max: 100,
+          labels: { style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+                    formatter: v => v != null ? v.toFixed(0) + '%' : '' },
+          title: { text: '%', style: { fontFamily: 'JetBrains Mono, monospace' } },
+        },
+      })
+    );
+
+    chartTempFreq.render();
+    chartCpuMem.render();
+  }
+
+  function updateCharts(charts) {
+    if (chartTempFreq) chartTempFreq.updateSeries([
+      { name: 'CPU temp (°C)',    data: toApex(charts.cpu_temp) },
+      { name: 'Freq corr (ppm)', data: toApex(charts.freq_ppm) },
+    ]);
+    if (chartCpuMem) chartCpuMem.updateSeries([
+      { name: 'CPU %', data: toApex(charts.cpu_usage) },
+      { name: 'Mem %', data: toApex(charts.mem_usage) },
+    ]);
+  }
+
+  let firstLoad = true;
+
+  async function refresh() {
+    try {
+      const resp = await fetch('/api/system');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      renderStats(data);
+      renderServices(data.services);
+      renderPPS(data.pps_devices);
+
+      if (firstLoad) { initCharts(data.charts); firstLoad = false; }
+      else           { updateCharts(data.charts); }
+
+      updateDataAge(data.cycle_time, data.errors);
+    } catch(err) {
+      console.error('System fetch failed:', err);
+      updateDataAge(null, [err.message]);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, {{ refresh_interval }} * 1000);
+</script>
+{% endblock %}

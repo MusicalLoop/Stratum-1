@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}GNSS Status — {{ site_name }}{% endblock %}
+
+{% block page_title %}GNSS Status{% endblock %}
+
+{% block head %}
+<style>
+  .fix-badge-0, .fix-badge-1 { background: #d63939 !important; color:#fff !important; }
+  .fix-badge-2 { background: #f76707 !important; color:#fff !important; }
+  .fix-badge-3 { background: #2fb344 !important; color:#fff !important; }
+
+  .dop-good   { color: #2fb344; }
+  .dop-ok     { color: #f76707; }
+  .dop-poor   { color: #d63939; }
+
+  .constellation-bar {
+    height: 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+  }
+  .const-gps     { background: #2fb344; }
+  .const-beidou  { background: #f76707; }
+  .const-glonass { background: #4299e1; }
+  .const-galileo { background: #9b59b6; }
+  .const-other   { background: #626976; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Fix status + DOP cards ────────────────────────────── -->
+<div class="row row-cards g-3 mb-3">
+
+  <!-- Fix mode -->
+  <div class="col-6 col-lg-3">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Fix Type</div>
+        <div class="d-flex align-items-center gap-2 mt-1">
+          <span class="badge fs-4 num px-3 py-2" id="fix-badge">—</span>
+        </div>
+        <div class="stat-sublabel num mt-2" id="fix-time">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Satellites -->
+  <div class="col-6 col-lg-3">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Satellites</div>
+        <div class="stat-value num" id="sats-used">—</div>
+        <div class="stat-sublabel num" id="sats-visible">— visible</div>
+        <div class="stat-sublabel num" id="sats-mask">mask —°</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HDOP -->
+  <div class="col-4 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">HDOP</div>
+        <div class="stat-value num" id="dop-h">—</div>
+        <div class="stat-sublabel">Horizontal</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VDOP -->
+  <div class="col-4 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">VDOP</div>
+        <div class="stat-value num" id="dop-v">—</div>
+        <div class="stat-sublabel">Vertical</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDOP -->
+  <div class="col-4 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">PDOP</div>
+        <div class="stat-value num" id="dop-p">—</div>
+        <div class="stat-sublabel">Position</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Constellations + Position row ─────────────────────── -->
+<div class="row g-3 mb-3">
+
+  <!-- Constellation breakdown -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title">Constellations</h3>
+        <div class="card-options">
+          <span class="text-muted" style="font-size:0.75rem" id="missing-consts"></span>
+        </div>
+      </div>
+      <div class="card-body" id="constellation-panel">
+        <div class="text-muted loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Position -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title">Position</h3>
+      </div>
+      <div class="card-body" id="position-panel">
+        <div class="text-muted loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── NMEA note ──────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-body py-2">
+    <small class="text-muted">
+      <strong>Note:</strong> GPS source in chrony sourcestats will show a large negative offset (~10–40ms).
+      This is expected — it reflects NMEA sentence processing delay.
+      The PPS signal provides the precise sub-microsecond timing; NMEA provides coarse second-level time only.
+    </small>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const CONST_COLORS = {
+    GPS:     '#2fb344',
+    BeiDou:  '#f76707',
+    GLONASS: '#4299e1',
+    Galileo: '#9b59b6',
+  };
+
+  function dopClass(v) {
+    if (v == null) return '';
+    if (v <= 1.5) return 'dop-good';
+    if (v <= 3.0) return 'dop-ok';
+    return 'dop-poor';
+  }
+
+  function renderFix(fix, data) {
+    const badge = document.getElementById('fix-badge');
+    const mode  = fix.mode || 0;
+    badge.className = `badge fs-4 num px-3 py-2 fix-badge-${mode}`;
+    badge.textContent = fix.mode_name || '—';
+    document.getElementById('fix-time').textContent = fix.time_utc
+      ? fix.time_utc.replace('T', ' ').replace('Z', ' UTC')
+      : '—';
+  }
+
+  function renderSatellites(sats, data) {
+    document.getElementById('sats-used').textContent    = sats.used ?? '—';
+    document.getElementById('sats-visible').textContent = `${sats.visible ?? '—'} visible`;
+    document.getElementById('sats-mask').textContent    = `mask ${sats.elevation_mask ?? '—'}°`;
+  }
+
+  function renderDOP(dop) {
+    ['h','v','p'].forEach(d => {
+      const key  = d + 'dop';
+      const el   = document.getElementById('dop-' + d);
+      const v    = dop[key];
+      el.textContent = v != null ? v.toFixed(1) : '—';
+      el.className   = 'stat-value num ' + dopClass(v);
+    });
+  }
+
+  function renderConstellations(summary, missing) {
+    const panel = document.getElementById('constellation-panel');
+    if (!summary || Object.keys(summary).length === 0) {
+      panel.innerHTML = '<div class="text-muted">No constellation data</div>';
+      return;
+    }
+
+    panel.innerHTML = Object.entries(summary).map(([name, counts]) => {
+      const color = CONST_COLORS[name] || '#626976';
+      const usedPct = counts.visible > 0
+        ? Math.round((counts.used / counts.visible) * 100)
+        : 0;
+      return `
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="fw-semibold" style="color:${color}">${name}</span>
+            <span class="num text-muted" style="font-size:0.82rem">
+              ${counts.used} used / ${counts.visible} visible
+            </span>
+          </div>
+          <div class="progress mt-1" style="height:6px;background:rgba(128,128,128,0.15)">
+            <div class="progress-bar" style="width:${usedPct}%;background:${color}"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Missing constellations warning
+    const missingEl = document.getElementById('missing-consts');
+    if (missing && missing.length > 0) {
+      missingEl.textContent = `⚠ Missing: ${missing.join(', ')}`;
+      missingEl.style.color = '#f76707';
+    } else {
+      missingEl.textContent = '';
+    }
+  }
+
+  function renderPosition(position) {
+    const panel = document.getElementById('position-panel');
+
+    if (position.hidden) {
+      panel.innerHTML = `
+        <div class="text-muted mb-3" style="font-size:0.85rem">
+          Position display is disabled in configuration.
+        </div>
+        <div class="row g-2">
+          <div class="col-12">
+            <small class="text-muted d-block">Altitude</small>
+            <span class="num fw-semibold">${position.altitude_m != null ? position.altitude_m.toFixed(1) + ' m' : '—'}</span>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const lat = position.latitude;
+    const lon = position.longitude;
+    const alt = position.altitude_m;
+    const eph = position.eph;
+
+    panel.innerHTML = `
+      <div class="row g-3">
+        <div class="col-6">
+          <small class="text-muted d-block">Latitude</small>
+          <span class="num fw-semibold">${lat != null ? lat.toFixed(6) + '°' : '—'}</span>
+        </div>
+        <div class="col-6">
+          <small class="text-muted d-block">Longitude</small>
+          <span class="num fw-semibold">${lon != null ? lon.toFixed(6) + '°' : '—'}</span>
+        </div>
+        <div class="col-6">
+          <small class="text-muted d-block">Altitude</small>
+          <span class="num fw-semibold">${alt != null ? alt.toFixed(1) + ' m' : '—'}</span>
+        </div>
+        <div class="col-6">
+          <small class="text-muted d-block">Horiz. error (eph)</small>
+          <span class="num fw-semibold">${eph != null ? eph.toFixed(1) + ' m' : '—'}</span>
+        </div>
+        ${lat != null ? `
+        <div class="col-12 mt-1">
+          <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}&zoom=15"
+             target="_blank" rel="noopener"
+             class="btn btn-sm btn-outline-secondary num">
+            View on map ↗
+          </a>
+        </div>` : ''}
+      </div>`;
+  }
+
+  async function refresh() {
+    try {
+      const resp = await fetch('/api/gnss');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      renderFix(data.fix || {}, data);
+      renderSatellites(data.satellites || {}, data);
+      renderDOP(data.dop || {});
+      renderConstellations(data.constellations, data.missing_constellations);
+      renderPosition(data.position || {});
+      updateDataAge(data.cycle_time, data.errors);
+    } catch(err) {
+      console.error('GNSS fetch failed:', err);
+      updateDataAge(null, [err.message]);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, {{ refresh_interval }} * 1000);
+</script>
+{% endblock %}

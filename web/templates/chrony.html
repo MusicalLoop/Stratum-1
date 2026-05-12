@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+
+{% block title %}NTP / Chrony — {{ site_name }}{% endblock %}
+
+{% block page_title %}NTP / Chrony{% endblock %}
+
+{% block head %}
+<style>
+  .source-row-pps  { border-left: 3px solid #2fb344; }
+  .source-row-gps  { border-left: 3px solid #4299e1; }
+  .source-row-zero { opacity: 0.45; }
+  .source-row-best { font-weight: 600; }
+  .state-best     { color: #2fb344; }
+  .state-combined { color: #4299e1; }
+  .state-unusable { color: #626976; }
+  .state-error    { color: #d63939; }
+  .offset-pos { color: #2fb344; }
+  .offset-neg { color: #4299e1; }
+  .gps-note {
+    font-size: 0.72rem;
+    color: #f76707;
+    margin-left: 4px;
+    cursor: help;
+  }
+  .tracking-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+  }
+  .tracking-item small {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    opacity: 0.55;
+    display: block;
+    margin-bottom: 2px;
+  }
+</style>
+{% endblock %}
+
+{% block page_actions %}
+<div class="btn-group btn-group-sm" id="range-btns" role="group">
+  <button type="button" class="btn btn-outline-secondary active" data-range="1h">1h</button>
+  <button type="button" class="btn btn-outline-secondary" data-range="6h">6h</button>
+  <button type="button" class="btn btn-outline-secondary" data-range="24h">24h</button>
+  <button type="button" class="btn btn-outline-secondary" data-range="7d">7d</button>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Tracking panel ──────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">Tracking</h3>
+    <div class="card-options">
+      <span class="badge bg-green-lt num" id="tracking-stratum-badge">Stratum —</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="tracking-grid" id="tracking-grid">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- ── Charts row ─────────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">PPS Offset over time</h3>
+        <div class="card-options">
+          <span class="text-muted num" style="font-size:0.75rem" id="chart-unit-label">ns</span>
+        </div>
+      </div>
+      <div class="card-body p-2">
+        <div id="chart-pps-offset" style="height:220px"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title">Frequency (ppm)</h3>
+      </div>
+      <div class="card-body p-2">
+        <div id="chart-freq" style="height:220px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Sources table ──────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Sources</h3>
+    <div class="card-options">
+      <small class="text-muted">* = current best &nbsp; + = combined &nbsp; - = not combined &nbsp; ? = unusable</small>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover card-table" id="sources-table">
+      <thead>
+        <tr>
+          <th>St</th>
+          <th>Name</th>
+          <th class="text-end">Stratum</th>
+          <th class="text-end">Poll</th>
+          <th class="text-end">Reach</th>
+          <th class="text-end">Last Rx</th>
+          <th class="text-end">Adj Offset</th>
+          <th class="text-end">Std Dev</th>
+          <th class="text-end">Samples</th>
+        </tr>
+      </thead>
+      <tbody id="sources-tbody">
+        <tr><td colspan="9" class="text-muted text-center loading">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let chartOffset = null;
+  let chartFreq   = null;
+  let currentRange = '1h';
+
+  // ── Range button wiring ──────────────────────────────────
+  document.getElementById('range-btns').addEventListener('click', e => {
+    const btn = e.target.closest('[data-range]');
+    if (!btn) return;
+    document.querySelectorAll('#range-btns .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentRange = btn.dataset.range;
+    refresh();
+  });
+
+  // ── Render tracking panel ────────────────────────────────
+  function renderTracking(t) {
+    if (!t) return;
+    document.getElementById('tracking-stratum-badge').textContent =
+      `Stratum ${t.stratum ?? '—'}`;
+
+    const fields = [
+      ['Reference',        t.reference_label || t.reference_name || '—', false],
+      ['Reference ID',     t.reference_id || '—', true],
+      ['System offset',    fmtNs(t.system_offset_ns, 'ns'), true],
+      ['Last offset',      fmtNs(t.last_offset_ns, 'ns'), true],
+      ['RMS offset',       fmtNs(t.rms_offset_ns, 'ns'), true],
+      ['Frequency',        t.freq_ppm != null ? `${t.freq_ppm.toFixed(3)} ppm ${t.freq_direction || ''}` : '—', true],
+      ['Residual freq',    t.residual_freq_ppm != null ? `${t.residual_freq_ppm.toFixed(3)} ppm` : '—', true],
+      ['Skew',             t.skew_ppm != null ? `${t.skew_ppm.toFixed(3)} ppm` : '—', true],
+      ['Root delay',       fmtNs(t.root_delay_ns, 'ns'), true],
+      ['Root dispersion',  t.root_dispersion_us != null ? `${t.root_dispersion_us.toFixed(3)} µs` : '—', true],
+      ['Update interval',  t.update_interval_s != null ? `${t.update_interval_s} s` : '—', false],
+      ['Leap status',      t.leap_status || '—', false],
+      ['Ref time (UTC)',   t.ref_time_utc || '—', false],
+    ];
+
+    document.getElementById('tracking-grid').innerHTML = fields.map(([label, val, mono]) =>
+      `<div class="tracking-item">
+        <small>${label}</small>
+        <span class="${mono ? 'num fw-semibold' : 'fw-semibold'}">${val}</span>
+      </div>`
+    ).join('');
+  }
+
+  // ── Render sources table ─────────────────────────────────
+  function renderSources(sources) {
+    if (!sources || !sources.length) {
+      document.getElementById('sources-tbody').innerHTML =
+        '<tr><td colspan="9" class="text-muted text-center">No sources</td></tr>';
+      return;
+    }
+
+    const stateClass = {
+      'best':         'state-best',
+      'combined':     'state-combined',
+      'not_combined': 'text-muted',
+      'unusable':     'state-unusable',
+      'error':        'state-error',
+      'too_variable': 'state-error',
+    };
+
+    const rows = sources.map(s => {
+      const rowCls = [
+        s.is_pps  ? 'source-row-pps'  : '',
+        s.is_gps  ? 'source-row-gps'  : '',
+        s.zero_samples ? 'source-row-zero' : '',
+        s.state === 'best' ? 'source-row-best' : '',
+      ].filter(Boolean).join(' ');
+
+      const stCls = stateClass[s.state] || '';
+      const stChar = s.state_char || '?';
+
+      // Offset display
+      let offsetHtml = '—';
+      if (!s.zero_samples && s.adj_offset_ns != null) {
+        const v = s.adj_offset_ns;
+        const cls = v >= 0 ? 'offset-pos' : 'offset-neg';
+        const sign = v >= 0 ? '+' : '';
+        const disp = Math.abs(v) >= 1e6
+          ? `${sign}${(v/1e6).toFixed(2)} ms`
+          : Math.abs(v) >= 1000
+          ? `${sign}${(v/1000).toFixed(1)} µs`
+          : `${sign}${v.toFixed(0)} ns`;
+        offsetHtml = `<span class="num ${cls}">${disp}</span>`;
+
+        // GPS note for NMEA delay
+        if (s.is_gps) {
+          offsetHtml += `<span class="gps-note" title="Expected NMEA processing delay — normal">NMEA</span>`;
+        }
+      }
+
+      // Std dev display
+      let stdDevHtml = '—';
+      if (!s.zero_samples && s.std_dev_ns != null) {
+        const v = s.std_dev_ns;
+        const disp = Math.abs(v) >= 1e6
+          ? `${(v/1e6).toFixed(2)} ms`
+          : Math.abs(v) >= 1000
+          ? `${(v/1000).toFixed(1)} µs`
+          : `${v.toFixed(0)} ns`;
+        stdDevHtml = `<span class="num">${disp}</span>`;
+      }
+
+      const lastRx = s.zero_samples ? '—'
+        : s.last_rx === '-' ? '—'
+        : s.last_rx_seconds != null ? `${s.last_rx_seconds}s` : s.last_rx || '—';
+
+      return `<tr class="${rowCls}">
+        <td><span class="num ${stCls} fw-bold">${stChar}</span></td>
+        <td><span class="num">${s.name}</span>
+            ${s.is_pps ? '<span class="badge bg-green-lt ms-1" style="font-size:0.65rem">PPS</span>' : ''}
+        </td>
+        <td class="text-end num">${s.stratum ?? '—'}</td>
+        <td class="text-end num">${s.poll ?? '—'}</td>
+        <td class="text-end num">${s.zero_samples ? '—' : (s.reach || '—')}</td>
+        <td class="text-end num">${lastRx}</td>
+        <td class="text-end">${offsetHtml}</td>
+        <td class="text-end">${stdDevHtml}</td>
+        <td class="text-end num">${s.zero_samples ? '—' : (s.np ?? '—')}</td>
+      </tr>`;
+    });
+
+    document.getElementById('sources-tbody').innerHTML = rows.join('');
+  }
+
+  // ── Init / update charts ─────────────────────────────────
+  function initCharts(charts) {
+    const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+
+    // PPS offset chart
+    chartOffset = new ApexCharts(
+      document.getElementById('chart-pps-offset'),
+      timeSeriesOptions({
+        series: [
+          { name: 'PPS offset', data: toApex(charts.pps_offset) },
+          { name: 'RMS offset', data: toApex(charts.rms_offset) },
+        ],
+        colors: ['#2fb344', '#4299e1'],
+        yaxis: {
+          labels: {
+            style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+            formatter: v => v != null ? v.toFixed(0) : '',
+          },
+          title: { text: charts.unit || 'ns',
+                   style: { fontFamily: 'JetBrains Mono, monospace' } },
+        },
+        stroke: { curve: 'smooth', width: [2, 1.5], dashArray: [0, 4] },
+      })
+    );
+
+    // Frequency chart
+    chartFreq = new ApexCharts(
+      document.getElementById('chart-freq'),
+      timeSeriesOptions({
+        series: [{ name: 'Frequency', data: toApex(charts.freq_ppm) }],
+        colors: ['#f76707'],
+        yaxis: {
+          labels: {
+            style: { fontFamily: 'JetBrains Mono, monospace', fontSize: '10px' },
+            formatter: v => v != null ? v.toFixed(3) : '',
+          },
+          title: { text: 'ppm',
+                   style: { fontFamily: 'JetBrains Mono, monospace' } },
+        },
+      })
+    );
+
+    chartOffset.render();
+    chartFreq.render();
+  }
+
+  function updateCharts(charts) {
+    if (!charts) return;
+    if (chartOffset) {
+      chartOffset.updateSeries([
+        { name: 'PPS offset', data: toApex(charts.pps_offset) },
+        { name: 'RMS offset', data: toApex(charts.rms_offset) },
+      ]);
+    }
+    if (chartFreq) {
+      chartFreq.updateSeries([
+        { name: 'Frequency', data: toApex(charts.freq_ppm) },
+      ]);
+    }
+    document.getElementById('chart-unit-label').textContent = charts.unit || 'ns';
+  }
+
+  // ── Main refresh ─────────────────────────────────────────
+  let firstLoad = true;
+
+  async function refresh() {
+    try {
+      const resp = await fetch(`/api/chrony?range=${currentRange}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      renderTracking(data.tracking);
+      renderSources(data.sources);
+
+      if (firstLoad) {
+        initCharts(data.charts);
+        firstLoad = false;
+      } else {
+        updateCharts(data.charts);
+      }
+
+      updateDataAge(data.cycle_time, data.errors);
+    } catch (err) {
+      console.error('Chrony fetch failed:', err);
+      updateDataAge(null, [err.message]);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, {{ refresh_interval }} * 1000);
+</script>
+{% endblock %}

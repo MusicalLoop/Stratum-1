@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+
+{% block title %}Overview — {{ site_name }}{% endblock %}
+
+{% block page_title %}
+  <span id="page-status-badge" class="badge badge-status-unknown me-2">—</span>
+  Overview
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat cards row ──────────────────────────────────────── -->
+<div class="row row-cards g-3 mb-3">
+
+  <!-- PPS Offset -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">PPS Offset</div>
+        <div class="stat-value num" id="stat-pps-offset">—</div>
+        <div class="stat-unit" id="stat-pps-unit">ns</div>
+        <div class="stat-sublabel num" id="stat-pps-range">—</div>
+        <div class="sparkline-wrap mt-2" id="spark-pps"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Jitter -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Jitter (RMS)</div>
+        <div class="stat-value num" id="stat-jitter">—</div>
+        <div class="stat-unit" id="stat-jitter-unit">ns</div>
+        <div class="sparkline-wrap mt-2" id="spark-rms"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GNSS Fix -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">GNSS Fix</div>
+        <div class="stat-value-sm num" id="stat-fix-mode">—</div>
+        <div class="stat-sublabel num" id="stat-sats">— / — sats</div>
+        <div class="stat-sublabel num" id="stat-hdop">HDOP —</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stratum -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Stratum</div>
+        <div class="stat-value num" id="stat-stratum">—</div>
+        <div class="stat-sublabel" id="stat-ref-label">—</div>
+        <div class="stat-sublabel num" id="stat-leap">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CPU Temp -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">CPU Temp</div>
+        <div class="stat-value num" id="stat-cpu-temp">—</div>
+        <div class="stat-unit">°C</div>
+        <div class="sparkline-wrap mt-2" id="spark-temp"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Uptime -->
+  <div class="col-6 col-lg-2">
+    <div class="card card-sm h-100">
+      <div class="card-body">
+        <div class="text-muted mb-1" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em">Uptime</div>
+        <div class="stat-value-sm num" id="stat-uptime">—</div>
+        <div class="stat-sublabel" id="stat-hostname">—</div>
+        <div class="stat-sublabel num" id="stat-ip">—</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /row cards -->
+
+<!-- ── Status detail panel ────────────────────────────────── -->
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Status Detail</h3>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-6">
+            <small class="text-muted d-block">Reference</small>
+            <span class="num fw-semibold" id="detail-ref">—</span>
+          </div>
+          <div class="col-6">
+            <small class="text-muted d-block">Leap status</small>
+            <span class="num fw-semibold" id="detail-leap">—</span>
+          </div>
+          <div class="col-6 mt-2">
+            <small class="text-muted d-block">PPS offset (5m mean)</small>
+            <span class="num fw-semibold" id="detail-pps-mean">—</span>
+          </div>
+          <div class="col-6 mt-2">
+            <small class="text-muted d-block">Offset range (5m)</small>
+            <span class="num fw-semibold" id="detail-pps-range">—</span>
+          </div>
+          <div class="col-6 mt-2">
+            <small class="text-muted d-block">Memory usage</small>
+            <span class="num fw-semibold" id="detail-mem">—</span>
+          </div>
+          <div class="col-6 mt-2">
+            <small class="text-muted d-block">Disk usage</small>
+            <span class="num fw-semibold" id="detail-disk">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active alerts panel -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title">Active Alerts</h3>
+      </div>
+      <div class="card-body" id="alerts-panel">
+        <div class="text-muted num" style="font-size:0.8rem">No active alerts</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Sparkline chart instances ────────────────────────────
+  let sparkPps  = null;
+  let sparkRms  = null;
+  let sparkTemp = null;
+
+  function initSparklines(data) {
+    const sl = data.sparklines || {};
+
+    sparkPps = new ApexCharts(
+      document.getElementById('spark-pps'),
+      sparklineOptions(toApex(sl.pps_offset), '#2fb344')
+    );
+    sparkRms = new ApexCharts(
+      document.getElementById('spark-rms'),
+      sparklineOptions(toApex(sl.rms_offset), '#4299e1')
+    );
+    sparkTemp = new ApexCharts(
+      document.getElementById('spark-temp'),
+      sparklineOptions(toApex(sl.cpu_temp), '#f76707')
+    );
+    sparkPps.render();
+    sparkRms.render();
+    sparkTemp.render();
+  }
+
+  function updateSparklines(data) {
+    const sl = data.sparklines || {};
+    if (sparkPps)  sparkPps.updateSeries( [{ data: toApex(sl.pps_offset) }]);
+    if (sparkRms)  sparkRms.updateSeries( [{ data: toApex(sl.rms_offset) }]);
+    if (sparkTemp) sparkTemp.updateSeries([{ data: toApex(sl.cpu_temp)   }]);
+  }
+
+  // ── Render overview data ─────────────────────────────────
+  function renderOverview(data) {
+    // Status badge
+    const badge = document.getElementById('page-status-badge');
+    const badgeMap = {
+      green:  ['badge-status-green',   '● OK'],
+      amber:  ['badge-status-amber',   '▲ WARN'],
+      red:    ['badge-status-red',     '✕ ALERT'],
+    };
+    const [cls, label] = badgeMap[data.status_badge] || ['badge-status-unknown', '— —'];
+    badge.className = 'badge ' + cls + ' me-2';
+    badge.textContent = label;
+
+    // PPS offset
+    const pps = data.pps_offset || {};
+    const unit = pps.unit || 'ns';
+    document.getElementById('stat-pps-unit').textContent = unit;
+    document.getElementById('stat-jitter-unit').textContent = unit;
+
+    if (pps.value != null) {
+      const v = parseFloat(pps.value);
+      document.getElementById('stat-pps-offset').textContent =
+        (v >= 0 ? '+' : '') + v.toFixed(1);
+    }
+    if (pps.min != null && pps.max != null) {
+      document.getElementById('stat-pps-range').textContent =
+        `${pps.min.toFixed(0)} … ${pps.max.toFixed(0)} ${unit}`;
+    }
+    document.getElementById('detail-pps-mean').textContent =
+      pps.value != null
+        ? (pps.value >= 0 ? '+' : '') + pps.value.toFixed(1) + ' ' + unit
+        : '—';
+    document.getElementById('detail-pps-range').textContent =
+      pps.min != null
+        ? pps.min.toFixed(1) + ' / ' + pps.max.toFixed(1) + ' ' + unit
+        : '—';
+
+    // Jitter
+    const jitter = data.jitter || {};
+    document.getElementById('stat-jitter').textContent =
+      jitter.value != null ? parseFloat(jitter.value).toFixed(1) : '—';
+
+    // GNSS fix
+    const fix = data.fix || {};
+    document.getElementById('stat-fix-mode').textContent =
+      fix.mode_name || '—';
+    document.getElementById('stat-sats').textContent =
+      (fix.sats_used != null && fix.sats_visible != null)
+        ? `${fix.sats_used} / ${fix.sats_visible} sats`
+        : '—';
+    document.getElementById('stat-hdop').textContent =
+      fix.hdop != null ? `HDOP ${fix.hdop.toFixed(1)}` : 'HDOP —';
+
+    // Stratum
+    document.getElementById('stat-stratum').textContent =
+      data.stratum != null ? data.stratum : '—';
+    document.getElementById('stat-ref-label').textContent =
+      data.reference_label || '—';
+    document.getElementById('stat-leap').textContent =
+      data.leap_status || '—';
+    document.getElementById('detail-ref').textContent =
+      data.reference_label || '—';
+    document.getElementById('detail-leap').textContent =
+      data.leap_status || '—';
+
+    // System
+    const sys = data.system || {};
+    document.getElementById('stat-cpu-temp').textContent =
+      sys.cpu_temp_c != null ? sys.cpu_temp_c.toFixed(1) : '—';
+    document.getElementById('stat-uptime').textContent =
+      sys.uptime_str || '—';
+    document.getElementById('stat-hostname').textContent =
+      sys.hostname || '—';
+    document.getElementById('stat-ip').textContent =
+      sys.ip_address || '—';
+    document.getElementById('detail-mem').textContent =
+      sys.mem_usage_pct != null ? sys.mem_usage_pct.toFixed(1) + ' %' : '—';
+    document.getElementById('detail-disk').textContent =
+      sys.disk_usage_pct != null ? sys.disk_usage_pct.toFixed(1) + ' %' : '—';
+
+    // Alerts panel
+    renderAlerts(data);
+
+    // Data age
+    updateDataAge(data.cycle_time, data.errors);
+  }
+
+  function renderAlerts(data) {
+    const panel = document.getElementById('alerts-panel');
+    const alerts = [];
+
+    const pps = data.pps_offset || {};
+    const sys = data.system || {};
+
+    if (data.status_badge === 'red' || data.status_badge === 'amber') {
+      if (pps.value != null && Math.abs(pps.value) >= 100)
+        alerts.push({ level: data.status_badge,
+                      msg: `PPS offset ${pps.value.toFixed(1)} ${pps.unit}` });
+      if (sys.cpu_temp_c != null && sys.cpu_temp_c >= 70)
+        alerts.push({ level: 'amber',
+                      msg: `CPU temp ${sys.cpu_temp_c.toFixed(1)} °C` });
+      if (sys.disk_usage_pct != null && sys.disk_usage_pct >= 80)
+        alerts.push({ level: 'amber',
+                      msg: `Disk ${sys.disk_usage_pct.toFixed(1)} %` });
+      if ((data.fix || {}).sats_used != null && data.fix.sats_used <= 4)
+        alerts.push({ level: 'amber',
+                      msg: `Only ${data.fix.sats_used} satellites used` });
+    }
+
+    if (alerts.length === 0) {
+      panel.innerHTML = '<div class="text-muted num" style="font-size:0.8rem">No active alerts</div>';
+      return;
+    }
+
+    panel.innerHTML = alerts.map(a => `
+      <div class="d-flex align-items-center mb-2">
+        <span class="badge badge-status-${a.level} me-2">${a.level.toUpperCase()}</span>
+        <span class="num" style="font-size:0.82rem">${a.msg}</span>
+      </div>
+    `).join('');
+  }
+
+  // ── Polling loop ─────────────────────────────────────────
+  let firstLoad = true;
+
+  async function refresh() {
+    try {
+      const resp = await fetch('/api/overview');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      if (firstLoad) {
+        initSparklines(data);
+        firstLoad = false;
+      } else {
+        updateSparklines(data);
+      }
+      renderOverview(data);
+    } catch (err) {
+      console.error('Overview fetch failed:', err);
+      updateDataAge(null, [err.message]);
+    }
+  }
+
+  // Initial load then poll
+  refresh();
+  setInterval(refresh, {{ refresh_interval }} * 1000);
+</script>
+{% endblock %}
